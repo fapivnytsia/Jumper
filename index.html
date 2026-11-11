@@ -47,6 +47,10 @@ canvas{position:fixed;inset:0;width:100%;height:100%;display:block}
 .btn:active{transform:translateY(2px);box-shadow:0 2px 0 var(--ink-d)}
 .hint{margin-top:12px;font-size:13px;color:var(--dim)}
 .new{font:700 26px/1.1 var(--f-hand);color:#d0402f}
+.paid{font:700 26px/1.1 var(--f-hand);color:var(--gold-d)}
+.online{margin-top:-6px;font-weight:700;color:var(--ink)}
+.btn:disabled{opacity:.6;cursor:default}
+.toast{position:fixed;left:50%;bottom:calc(env(safe-area-inset-bottom,0px) + 18px);transform:translateX(-50%);width:max-content;max-width:calc(100% - 32px);padding:8px 14px;border-radius:8px;background:var(--paper);color:#b3261e;font-weight:700;text-align:center;box-shadow:0 6px 18px rgba(0,0,0,.35)}
 </style>
 </head>
 <body>
@@ -57,6 +61,7 @@ canvas{position:fixed;inset:0;width:100%;height:100%;display:block}
   <img src="assets/frog-jump.png" alt="">
   <h1>Прыгуха</h1>
   <p>Лягушка лезет вверх по тетради. Прыгай по линейкам, собирай монетки, не наступай на ластики и не трогай кляксы.</p>
+  <p class="online" id="netInfo" hidden></p>
   <button class="btn" id="go">Прыг!</button>
   <div class="hint" id="howto">Наклоняй телефон или держи палец слева / справа. На компьютере — стрелки или A / D.</div>
 </div>
@@ -70,14 +75,17 @@ canvas{position:fixed;inset:0;width:100%;height:100%;display:block}
     <div><b id="best">0</b><span>рекорд</span></div>
   </div>
   <p id="newBest" class="new" hidden>Новый рекорд!</p>
+  <p id="paid" class="paid" hidden></p>
   <button class="btn" id="again">Ещё раз</button>
 </div>
+
+<div class="toast" id="toast" hidden></div>
 
 <script type="module">
 import {
   WORLD_W, GRAVITY, JUMP_V, SPRING_V, STOMP_V, MAX_FALL, MOVE_V, PLAT_W, PLAT_H, COIN_R, MOB_W, MOB_H,
   makeLevel, platX, mobX, scoreOf,
-} from './rules.js?v=2';
+} from './rules.js?v=3';
 
 const DEATHS = ['Шмяк!', 'Улетела в поля', 'Тетрадь закрыта', 'Клякса победила', 'Квак…', 'Двойка за прыжок'];
 const MIN_VIEW_H = 560;   // world units always visible vertically on tall screens
@@ -122,24 +130,80 @@ function reset(seed) {
 }
 reset(1);
 
-function startGame() {
+/* ---------- online mode: the game server deals each run's level and takes its result ---------- */
+// The server address comes from the page link (?api=host). Without it the game runs here alone.
+let net = null;   // { host, token, sid, pay, dead }
+
+async function call(route, body = {}) {
+  try {
+    const res = await fetch(`https://${net.host}/jump/api/${route}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ game: net.token, sid: net.sid, ...body }),
+      referrerPolicy: 'no-referrer',
+    });
+    return await res.json();
+  } catch (e) {
+    return { error: 'Нет связи с сервером игры' };
+  }
+}
+
+let toastTimer = 0;
+function toast(msg) {
+  $('toast').textContent = msg; $('toast').hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { $('toast').hidden = true; }, 5000);
+}
+const lockButtons = on => { $('go').disabled = on; $('again').disabled = on; };
+
+// Taken over by the game opened in another window: this one stops
+function lost() {
+  net.dead = true; lockButtons(true);
+  toast('Игра открыта в другом окне — здесь она остановлена');
+}
+
+let starting = false;
+async function startGame() {
+  if (starting || state === 'play' || net?.dead || (net && !net.sid)) return;
   askTilt();
-  reset((Math.random() * 2 ** 32) >>> 0);
+  let seed = (Math.random() * 2 ** 32) >>> 0;
+  if (net) {
+    starting = true; lockButtons(true);
+    const r = await call('start');
+    starting = false; lockButtons(false);
+    if (r.closed) return lost();
+    if (!Number.isInteger(r.seed)) return toast(r.error || 'Нет связи с сервером игры');
+    seed = r.seed;
+  }
+  reset(seed);
   state = 'play';
-  $('start').hidden = true; $('over').hidden = true; $('bar').hidden = false;
+  $('start').hidden = true; $('over').hidden = true; $('bar').hidden = false; $('toast').hidden = true;
 }
 
 function die() {
   if (state !== 'play') return;
   state = 'dead'; shake = 0.3;
   const score = scoreOf(maxH);
-  const isNew = score > best;
-  if (isNew) { best = score; try { localStorage.setItem('jump.best', best); } catch (e) {} }
-  setTimeout(() => {
+  const pause = new Promise(done => setTimeout(done, 700));
+  const sent = net ? call('finish', { height: Math.floor(maxH), coins: gotIds }) : Promise.resolve(null);
+  Promise.all([sent, pause]).then(([r]) => {
+    let isNew = false, paid = 0;
+    if (!net) {
+      isNew = score > best;
+      if (isNew) { best = score; try { localStorage.setItem('jump.best', best); } catch (e) {} }
+    } else if (r.closed) {
+      lost();
+    } else {
+      if (Number.isInteger(r.best)) best = r.best;
+      if (r.error) toast(r.error);
+      else { isNew = r.record; paid = r.paid; }
+    }
     $('overTitle').textContent = DEATHS[Math.random() * DEATHS.length | 0];
     $('final').textContent = score; $('got').textContent = got; $('best').textContent = best;
-    $('newBest').hidden = !isNew; $('over').hidden = false;
-  }, 700);
+    $('newBest').hidden = !isNew;
+    $('paid').textContent = `+${paid} на баланс`; $('paid').hidden = !paid;
+    $('over').hidden = false;
+  });
 }
 
 // ---- Input: tilt, touch halves, keyboard ----
@@ -466,9 +530,27 @@ async function loadTelegram() {
   return window.Telegram?.WebApp || null;
 }
 
-// Inside Telegram: full height, no swipe-to-close while jumping, tilt from Telegram's own sensor
-loadTelegram().then(tgApp => {
+// Inside Telegram: full height, no swipe-to-close while jumping, tilt from Telegram's own sensor,
+// and the online mode if the link names the game server
+loadTelegram().then(async tgApp => {
   if (!tgApp) return;
+  const host = new URLSearchParams(location.search).get('api') || '';
+  const token = tgApp.initDataUnsafe?.start_param || '';
+  if (tgApp.initData && token && /^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(host)) {
+    net = { host, token, sid: '', pay: 0, dead: false };
+    lockButtons(true);
+    const r = await call('open', { initData: tgApp.initData });
+    lockButtons(false);
+    if (r.sid) {
+      net.sid = r.sid; net.pay = r.pay; best = r.best || 0;
+      $('netInfo').textContent = `Рекорд: ${best} · монетка — +${r.pay} на баланс`;
+      $('netInfo').hidden = false;
+    } else {
+      // No session: the game still runs, on its own in this browser
+      net = null;
+      toast(r.error || 'Нет связи с сервером игры');
+    }
+  }
   tgApp.ready(); tgApp.expand();
   tgApp.disableVerticalSwipes?.();
   try {

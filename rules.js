@@ -14,6 +14,8 @@ export const COIN_R = 13;
 export const MOB_W = 46, MOB_H = 40;
 export const SCORE_DIV = 10;          // score = height / SCORE_DIV
 export const JUMP_H = (JUMP_V * JUMP_V) / (2 * GRAVITY); // ≈205, the highest a plain bounce reaches
+// The fastest climb a run may show, units/s: plain bounces give ~430 at best, springs come once per 900
+export const MAX_CLIMB = 800;
 
 const SAFE_GAP = JUMP_H * 0.86;       // the biggest gap between two platforms you can stand on
 const HARD_AT = 40000;                // height where the difficulty stops growing
@@ -155,7 +157,7 @@ export const mobX = (m, t) => m.x0 + Math.sin(m.phase + t * m.speed) * m.range;
 export function checkRun(seed, height, coinIds, ms) {
   if (!Number.isFinite(height) || height < 0) return "height";
   if (!Number.isFinite(ms) || ms <= 0) return "time";
-  if (height > (ms / 1000) * SPRING_V + JUMP_H * 2) return "too fast";
+  if (height > (ms / 1000) * MAX_CLIMB + JUMP_H * 2) return "too fast";
   if (!Array.isArray(coinIds) || new Set(coinIds).size !== coinIds.length) return "coins";
 
   const lvl = makeLevel(seed);

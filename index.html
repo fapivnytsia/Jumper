@@ -1,0 +1,486 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>Прыгуха</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Caveat:wght@600;700&family=Nunito:wght@400;700;800&display=swap">
+<style>
+/* Layout: full-screen canvas with a notebook page; score and coins on top, start/game-over card in the middle */
+:root{
+  --desk:#3b4a5a;
+  --paper:#fbf8ef;
+  --ink:#1f3fa8;
+  --ink-d:#142a73;
+  --text:#22304a;
+  --dim:#5d6a80;
+  --line:rgba(31,63,168,.18);
+  --gold:#f2b51d;
+  --gold-d:#a8720a;
+  --frog:#3fa34d;
+  --frog-d:#24702f;
+  --f-hand:"Caveat","Comic Sans MS","Segoe Print",cursive;
+  --f-body:"Nunito",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  color-scheme:light;
+}
+*,*::before,*::after{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{margin:0;height:100%;overflow:hidden;background:var(--desk);color:var(--text);font:400 15px/1.45 var(--f-body);-webkit-font-smoothing:antialiased;touch-action:none;user-select:none;-webkit-user-select:none;overscroll-behavior:none}
+canvas{position:fixed;inset:0;width:100%;height:100%;display:block}
+.hud{position:fixed;left:0;right:0;top:calc(env(safe-area-inset-top,0px) + 8px);display:flex;justify-content:center;pointer-events:none}
+.bar{width:min(100%,var(--field-w,100%));display:flex;justify-content:space-between;align-items:center;padding:0 14px}
+.score,.coins{padding:2px 10px 4px;border-radius:10px;background:rgba(251,248,239,.82)}
+.score{font:700 clamp(34px,9vw,46px)/1 var(--f-hand);color:var(--ink)}
+.coins{display:flex;align-items:center;gap:6px;font:700 clamp(26px,7vw,34px)/1 var(--f-hand);color:var(--gold-d)}
+.coins i{width:22px;height:22px;border-radius:50%;background:radial-gradient(circle at 35% 35%,#ffe58a,var(--gold) 60%,var(--gold-d));box-shadow:inset 0 0 0 2px var(--ink)}
+.card{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%) rotate(-1deg);width:min(330px,calc(100% - 32px));padding:22px 20px 20px;border-radius:6px;background:var(--paper);background-image:linear-gradient(var(--line) 1px,transparent 1px),linear-gradient(90deg,var(--line) 1px,transparent 1px);background-size:18px 18px;box-shadow:0 2px 0 #e6dfcb,0 18px 40px rgba(0,0,0,.45);text-align:center}
+.card::before{content:"";position:absolute;left:50%;top:-12px;width:90px;height:24px;transform:translateX(-50%) rotate(2deg);background:rgba(255,236,150,.85);box-shadow:0 1px 2px rgba(0,0,0,.15)}
+.card img{width:96px;height:96px;object-fit:contain;margin:0 auto 2px;display:block}
+.card h1{margin:0 0 4px;font:700 44px/1 var(--f-hand);color:var(--ink)}
+.card p{margin:0 0 14px;color:var(--dim)}
+.stats{display:flex;justify-content:center;gap:24px;margin:2px 0 14px}
+.stats b{display:block;font:700 38px/1 var(--f-hand);color:var(--ink)}
+.stats span{font-size:12px;color:var(--dim);text-transform:uppercase;letter-spacing:.08em}
+.btn{appearance:none;border:2px solid var(--ink-d);border-radius:12px 14px 11px 15px;padding:10px 28px;background:var(--frog);color:#fff;font:700 28px/1 var(--f-hand);cursor:pointer;box-shadow:0 4px 0 var(--ink-d)}
+.btn:active{transform:translateY(2px);box-shadow:0 2px 0 var(--ink-d)}
+.hint{margin-top:12px;font-size:13px;color:var(--dim)}
+.new{font:700 26px/1.1 var(--f-hand);color:#d0402f}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="hud"><div class="bar" id="bar" hidden><div class="score" id="score">0</div><div class="coins"><i></i><span id="coins">0</span></div></div></div>
+
+<div class="card" id="start">
+  <img src="assets/frog-jump.png" alt="">
+  <h1>Прыгуха</h1>
+  <p>Лягушка лезет вверх по тетради. Прыгай по линейкам, собирай монетки, не наступай на ластики и не трогай кляксы.</p>
+  <button class="btn" id="go">Прыг!</button>
+  <div class="hint" id="howto">Наклоняй телефон или держи палец слева / справа. На компьютере — стрелки или A / D.</div>
+</div>
+
+<div class="card" id="over" hidden>
+  <img src="assets/frog-ko.png" alt="">
+  <h1 id="overTitle">Шмяк!</h1>
+  <div class="stats">
+    <div><b id="final">0</b><span>высота</span></div>
+    <div><b id="got">0</b><span>монет</span></div>
+    <div><b id="best">0</b><span>рекорд</span></div>
+  </div>
+  <p id="newBest" class="new" hidden>Новый рекорд!</p>
+  <button class="btn" id="again">Ещё раз</button>
+</div>
+
+<script type="module">
+import {
+  WORLD_W, GRAVITY, JUMP_V, SPRING_V, STOMP_V, MAX_FALL, MOVE_V, PLAT_W, PLAT_H, COIN_R, MOB_W, MOB_H,
+  makeLevel, platX, mobX, scoreOf,
+} from './rules.js?v=2';
+
+const DEATHS = ['Шмяк!', 'Улетела в поля', 'Тетрадь закрыта', 'Клякса победила', 'Квак…', 'Двойка за прыжок'];
+const MIN_VIEW_H = 560;   // world units always visible vertically on tall screens
+const FROG_W = 52, FROG_H = 52, FEET_W = 30;
+
+const cv = document.getElementById('c'), cx = cv.getContext('2d');
+const $ = id => document.getElementById(id);
+
+// Sprites: drawn by hand-made fallbacks until (or if not) loaded
+const IMG = {};
+for (const n of ['paper', 'frog-crouch', 'frog-jump', 'frog-fall', 'frog-ko', 'ruler', 'sticky', 'eraser',
+  'eraser-broken', 'spring', 'spring-up', 'coin', 'blot', 'plane']) {
+  const im = new Image(); im.src = `assets/${n}.png`; IMG[n] = im;
+}
+const ready = im => im && im.complete && im.naturalWidth > 0;
+
+// Screen: the field is WORLD_W wide, scaled to the screen width (capped on wide screens) and centered
+let dpr = 1, scale = 1, offX = 0, viewH = 600;
+function resize() {
+  dpr = Math.min(window.devicePixelRatio || 1, 2);
+  cv.width = innerWidth * dpr; cv.height = innerHeight * dpr;
+  scale = Math.min(innerWidth / WORLD_W, innerHeight / MIN_VIEW_H);
+  offX = (innerWidth - WORLD_W * scale) / 2;
+  viewH = innerHeight / scale;
+  document.documentElement.style.setProperty('--field-w', WORLD_W * scale + 'px');
+}
+addEventListener('resize', resize); resize();
+
+let best = 0;
+try { best = +localStorage.getItem('jump.best') || 0; } catch (e) {}
+
+// state: 'idle' | 'play' | 'dead'
+let state = 'idle', lvl, frog, cam, t, maxH, got, gotIds, broken, deadMobs, springs, planes, last = 0, shake = 0;
+
+function reset(seed) {
+  lvl = makeLevel(seed);
+  frog = { x: WORLD_W / 2, y: 40, vx: 0, vy: JUMP_V, face: 1, squash: 0 };
+  cam = 0; t = 0; maxH = 0; got = 0; gotIds = []; broken = new Map(); deadMobs = new Set(); springs = new Map();
+  planes = [];
+  lvl.extend(viewH + 400);
+  $('score').textContent = '0'; $('coins').textContent = '0';
+}
+reset(1);
+
+function startGame() {
+  askTilt();
+  reset((Math.random() * 2 ** 32) >>> 0);
+  state = 'play';
+  $('start').hidden = true; $('over').hidden = true; $('bar').hidden = false;
+}
+
+function die() {
+  if (state !== 'play') return;
+  state = 'dead'; shake = 0.3;
+  const score = scoreOf(maxH);
+  const isNew = score > best;
+  if (isNew) { best = score; try { localStorage.setItem('jump.best', best); } catch (e) {} }
+  setTimeout(() => {
+    $('overTitle').textContent = DEATHS[Math.random() * DEATHS.length | 0];
+    $('final').textContent = score; $('got').textContent = got; $('best').textContent = best;
+    $('newBest').hidden = !isNew; $('over').hidden = false;
+  }, 700);
+}
+
+// ---- Input: tilt, touch halves, keyboard ----
+const keys = { l: false, r: false };
+let touchDir = 0, tilt = null;
+addEventListener('keydown', e => {
+  if (e.code === 'ArrowLeft' || e.code === 'KeyA') keys.l = true;
+  if (e.code === 'ArrowRight' || e.code === 'KeyD') keys.r = true;
+  if ((e.code === 'Space' || e.code === 'Enter') && state !== 'play') startGame();
+});
+addEventListener('keyup', e => {
+  if (e.code === 'ArrowLeft' || e.code === 'KeyA') keys.l = false;
+  if (e.code === 'ArrowRight' || e.code === 'KeyD') keys.r = false;
+});
+function touches(e) {
+  if (state !== 'play') return;
+  let dir = 0;
+  for (const p of e.touches) dir += p.clientX < innerWidth / 2 ? -1 : 1;
+  touchDir = Math.sign(dir);
+}
+cv.addEventListener('touchstart', e => { e.preventDefault(); touches(e); }, { passive: false });
+cv.addEventListener('touchmove', e => { e.preventDefault(); touches(e); }, { passive: false });
+cv.addEventListener('touchend', touches);
+cv.addEventListener('touchcancel', touches);
+cv.addEventListener('mousedown', e => { if (state === 'play') touchDir = e.clientX < innerWidth / 2 ? -1 : 1; });
+addEventListener('mouseup', () => { touchDir = 0; });
+
+// Tilt: Telegram's own sensor in the mini app, the browser's otherwise (iOS asks permission on the first tap)
+function onOrient(gamma) { if (Number.isFinite(gamma)) tilt = gamma; }
+let tiltAsked = false;
+function askTilt() {
+  if (tiltAsked) return; tiltAsked = true;
+  const DO = window.DeviceOrientationEvent;
+  if (DO && typeof DO.requestPermission === 'function') DO.requestPermission().catch(() => {});
+}
+addEventListener('deviceorientation', e => onOrient(e.gamma));
+
+function steer() {
+  const k = (keys.r ? 1 : 0) - (keys.l ? 1 : 0);
+  if (k || touchDir) return k || touchDir;
+  if (tilt !== null) {
+    const g = Math.max(-25, Math.min(25, tilt));
+    return Math.abs(g) < 2 ? 0 : g / 25;
+  }
+  return 0;
+}
+
+// ---- Simulation ----
+function update(dt) {
+  if (state === 'idle') { idleBounce(dt); return; }
+  t += dt;
+
+  // Sideways: ease toward the wanted speed, wrap around the page edges
+  const want = steer() * MOVE_V;
+  frog.vx += (want - frog.vx) * Math.min(1, dt * 12);
+  if (Math.abs(frog.vx) > 20) frog.face = Math.sign(frog.vx);
+  frog.x += frog.vx * dt;
+  if (frog.x < -FROG_W / 2) frog.x += WORLD_W;
+  if (frog.x > WORLD_W + FROG_W / 2) frog.x -= WORLD_W;
+
+  const prevY = frog.y;
+  frog.vy = Math.max(-MAX_FALL, frog.vy - GRAVITY * dt);
+  frog.y += frog.vy * dt;
+  frog.squash = Math.max(0, frog.squash - dt * 5);
+
+  if (state === 'play') {
+    if (frog.vy < 0) land(prevY);
+    touchMobs(prevY);
+    takeCoins();
+
+    if (frog.y > maxH) {
+      maxH = frog.y;
+      $('score').textContent = scoreOf(maxH);
+    }
+    // The camera only climbs: the frog stays in the lower part of the view
+    cam = Math.max(cam, frog.y - viewH * 0.45);
+    lvl.extend(cam + viewH + 400);
+    if (frog.y < cam - FROG_H) die();
+  }
+
+  for (const [id, b] of broken) { b.vy -= GRAVITY * dt; b.y += b.vy * dt; b.rot += dt * 2; if (b.y < cam - 200) broken.delete(id); }
+  for (const [id, s] of springs) if ((s.t -= dt) <= 0) springs.delete(id);
+  flyPlanes(dt);
+}
+
+// A falling frog lands on whatever top its feet crossed this frame
+function land(prevY) {
+  for (const p of lvl.plats) {
+    if (p.y > prevY || p.y < frog.y || broken.has(p.id)) continue;
+    const px = platX(p, t);
+    if (!overlapX(px, PLAT_W)) continue;
+    if (p.t === 'b') {
+      broken.set(p.id, { x: px, y: p.y, vy: 0, rot: 0 });
+      continue;
+    }
+    frog.y = p.y;
+    if (p.spring && overlapX(px + PLAT_W / 2 - 12, 24)) {
+      frog.vy = SPRING_V;
+      springs.set(p.id, { t: 0.35 });
+    } else {
+      frog.vy = JUMP_V;
+    }
+    frog.squash = 1;
+    return;
+  }
+}
+
+// Feet overlap: the frog wraps around, so check the copy on the other side too
+function overlapX(x, w) {
+  for (const fx of [frog.x, frog.x - WORLD_W, frog.x + WORLD_W]) {
+    if (fx + FEET_W / 2 > x && fx - FEET_W / 2 < x + w) return true;
+  }
+  return false;
+}
+
+// Ink blots: landing on top squashes one and bounces, any other touch ends the run
+function touchMobs(prevY) {
+  for (const m of lvl.mobs) {
+    if (deadMobs.has(m.id) || m.y > frog.y + 300 || m.y < frog.y - 300) continue;
+    const mx = mobX(m, t);
+    const top = m.y + MOB_H;
+    const xHit = frog.x + FROG_W * 0.32 > mx && frog.x - FROG_W * 0.32 < mx + MOB_W;
+    if (!xHit) continue;
+    if (frog.vy < 0 && prevY >= top - 4 && frog.y <= top) {
+      deadMobs.add(m.id);
+      frog.y = top; frog.vy = STOMP_V; frog.squash = 1;
+      continue;
+    }
+    if (frog.y < top - 6 && frog.y + FROG_H * 0.8 > m.y + 6) {
+      die();
+      frog.vy = 200; frog.vx = 0;
+    }
+  }
+}
+
+function takeCoins() {
+  const cxF = frog.x, cyF = frog.y + FROG_H / 2;
+  for (const c of lvl.coins) {
+    if (c.taken || Math.abs(c.y - cyF) > 60) continue;
+    const dx = Math.abs(c.x - cxF), dy = Math.abs(c.y - cyF);
+    if (dx < COIN_R + FROG_W * 0.38 && dy < COIN_R + FROG_H * 0.45) {
+      c.taken = true; c.fx = 0.35;
+      got++; gotIds.push(c.id);
+      $('coins').textContent = got;
+    }
+  }
+}
+
+// The start screen: the frog bounces on its first ruler
+function idleBounce(dt) {
+  frog.vy = Math.max(-MAX_FALL, frog.vy - GRAVITY * dt);
+  frog.y += frog.vy * dt;
+  if (frog.y <= 40) { frog.y = 40; frog.vy = JUMP_V; frog.squash = 1; }
+  frog.squash = Math.max(0, frog.squash - dt * 5);
+  t += dt;
+  flyPlanes(dt);
+}
+
+// Paper planes drift across now and then, just for life
+function flyPlanes(dt) {
+  if (Math.random() < dt * 0.06 && planes.length < 2) {
+    const dir = Math.random() < 0.5 ? 1 : -1;
+    planes.push({ x: dir > 0 ? -60 : WORLD_W + 60, y: cam + viewH * (0.4 + Math.random() * 0.5), dir, v: 50 + Math.random() * 40, ph: Math.random() * 6 });
+  }
+  for (const p of planes) { p.x += p.dir * p.v * dt; p.ph += dt; }
+  planes = planes.filter(p => p.x > -100 && p.x < WORLD_W + 100);
+}
+
+// ---- Drawing: world y up, screen y down ----
+const sy = y => (cam + viewH - y);
+
+function drawImg(im, x, y, w, h, flip = false, rot = 0) {
+  cx.save();
+  cx.translate(x + w / 2, y + h / 2);
+  if (rot) cx.rotate(rot);
+  if (flip) cx.scale(-1, 1);
+  cx.drawImage(im, -w / 2, -h / 2, w, h);
+  cx.restore();
+}
+
+// Sprite fit: keep the image's own aspect inside a w×h box, anchored at the bottom center
+function fitBottom(im, x, yBottom, w, h) {
+  const k = Math.min(w / im.naturalWidth, h / im.naturalHeight);
+  const dw = im.naturalWidth * k, dh = im.naturalHeight * k;
+  return [x + (w - dw) / 2, yBottom - dh, dw, dh];
+}
+
+function paper() {
+  const im = IMG.paper;
+  cx.fillStyle = '#fbf8ef';
+  cx.fillRect(0, 0, WORLD_W, viewH);
+  if (ready(im)) {
+    // 12 cells per tile: the grid moves with the world
+    const tile = 240;
+    for (let y = ((cam + viewH) % tile) - tile; y < viewH; y += tile)
+      for (let x = 0; x < WORLD_W; x += tile) cx.drawImage(im, x, y, tile, tile);
+  } else {
+    cx.strokeStyle = 'rgba(31,63,168,.14)'; cx.lineWidth = 1;
+    const g = 18, off = cam % g;
+    cx.beginPath();
+    for (let y = off; y < viewH; y += g) { cx.moveTo(0, y); cx.lineTo(WORLD_W, y); }
+    for (let x = 0; x < WORLD_W; x += g) { cx.moveTo(x, 0); cx.lineTo(x, viewH); }
+    cx.stroke();
+  }
+}
+
+function platform(p) {
+  const x = platX(p, t), y = sy(p.y);
+  const im = p.t === 'm' ? IMG.sticky : p.t === 'b' ? IMG.eraser : IMG.ruler;
+  if (ready(im)) {
+    drawImg(im, x - 4, y - 4, PLAT_W + 8, PLAT_H + 12);
+  } else {
+    cx.fillStyle = p.t === 'm' ? '#8fd3f5' : p.t === 'b' ? '#f19bb1' : '#e2b56a';
+    cx.strokeStyle = '#1f3fa8'; cx.lineWidth = 2;
+    cx.beginPath(); cx.roundRect(x, y, PLAT_W, PLAT_H, 4); cx.fill(); cx.stroke();
+  }
+  if (p.spring) {
+    const up = springs.has(p.id);
+    const im2 = up ? IMG['spring-up'] : IMG.spring;
+    const h = up ? 40 : 22;
+    if (ready(im2)) drawImg(im2, x + PLAT_W / 2 - 11, y - h + 3, 22, h);
+    else { cx.fillStyle = '#9aa3ad'; cx.fillRect(x + PLAT_W / 2 - 8, y - h + 3, 16, h); }
+  }
+}
+
+function brokenEraser(b) {
+  const im = IMG['eraser-broken'];
+  const y = sy(b.y);
+  if (ready(im)) drawImg(im, b.x - 4, y - 6, PLAT_W + 8, PLAT_H + 16, false, b.rot * 0.3);
+  else { cx.fillStyle = '#f19bb1'; cx.fillRect(b.x, y, PLAT_W / 2 - 4, PLAT_H); cx.fillRect(b.x + PLAT_W / 2 + 4, y, PLAT_W / 2 - 4, PLAT_H); }
+}
+
+function coin(c) {
+  let r = COIN_R;
+  if (c.taken) { if (!(c.fx > 0)) return; r *= 1 + (0.35 - c.fx) * 3; cx.globalAlpha = c.fx / 0.35; }
+  const wob = Math.abs(Math.cos(t * 3 + c.id));
+  const w = r * 2 * (0.55 + 0.45 * wob), y = sy(c.y);
+  if (ready(IMG.coin)) drawImg(IMG.coin, c.x - w / 2, y - r, w, r * 2);
+  else { cx.fillStyle = '#f2b51d'; cx.beginPath(); cx.ellipse(c.x, y, w / 2, r, 0, 0, 7); cx.fill(); }
+  cx.globalAlpha = 1;
+}
+
+function mob(m) {
+  if (deadMobs.has(m.id)) return;
+  const x = mobX(m, t), y = sy(m.y) - MOB_H;
+  const bob = Math.sin(t * 4 + m.id) * 3;
+  if (ready(IMG.blot)) drawImg(IMG.blot, x - 4, y - 4 + bob, MOB_W + 8, MOB_H + 8, Math.sin(m.phase + t * m.speed) < 0);
+  else { cx.fillStyle = '#1f3fa8'; cx.beginPath(); cx.ellipse(x + MOB_W / 2, y + MOB_H / 2 + bob, MOB_W / 2, MOB_H / 2, 0, 0, 7); cx.fill(); }
+}
+
+function drawFrog() {
+  const pose = state === 'dead' ? 'frog-ko' : frog.squash > 0.6 ? 'frog-crouch' : frog.vy > 0 ? 'frog-jump' : 'frog-fall';
+  const im = IMG[pose];
+  const sq = frog.squash > 0.6 ? 0 : frog.squash;
+  const w = FROG_W * (1 + sq * 0.15), h = FROG_H * (1 - sq * 0.12);
+  for (const fx of [frog.x, frog.x - WORLD_W, frog.x + WORLD_W]) {
+    if (fx < -FROG_W || fx > WORLD_W + FROG_W) continue;
+    const yb = sy(frog.y);
+    if (ready(im)) {
+      const [dx, dy, dw, dh] = fitBottom(im, fx - w / 2 - 6, yb + 2, w + 12, h + 12);
+      drawImg(im, dx, dy, dw, dh, frog.face < 0, state === 'dead' ? t * 6 : 0);
+    } else {
+      cx.fillStyle = '#3fa34d'; cx.strokeStyle = '#1f3fa8'; cx.lineWidth = 2;
+      cx.beginPath(); cx.ellipse(fx, yb - h / 2, w / 2, h / 2, 0, 0, 7); cx.fill(); cx.stroke();
+    }
+  }
+}
+
+function drawPlanes() {
+  for (const p of planes) {
+    const y = sy(p.y) + Math.sin(p.ph * 2) * 8;
+    if (ready(IMG.plane)) drawImg(IMG.plane, p.x - 26, y - 14, 52, 28, p.dir < 0, Math.sin(p.ph * 2) * 0.1);
+  }
+}
+
+function render() {
+  cx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  cx.fillStyle = '#3b4a5a';
+  cx.fillRect(0, 0, innerWidth, innerHeight);
+  const sh = shake > 0 ? (Math.random() - 0.5) * 8 * shake : 0;
+  cx.setTransform(dpr * scale, 0, 0, dpr * scale, dpr * (offX + sh), 0);
+  cx.save();
+  cx.beginPath(); cx.rect(0, 0, WORLD_W, viewH); cx.clip();
+  paper();
+  drawPlanes();
+  const lo = cam - 80, hi = cam + viewH + 80;
+  for (const p of lvl.plats) if (p.y > lo && p.y < hi && !broken.has(p.id)) platform(p);
+  for (const b of broken.values()) brokenEraser(b);
+  for (const c of lvl.coins) if (c.y > lo && c.y < hi) coin(c);
+  for (const m of lvl.mobs) if (m.y > lo - MOB_H && m.y < hi) mob(m);
+  drawFrog();
+  cx.restore();
+  // Page edges on wide screens
+  if (offX > 1) {
+    cx.fillStyle = 'rgba(0,0,0,.25)';
+    cx.fillRect(-6, 0, 6, viewH); cx.fillRect(WORLD_W, 0, 6, viewH);
+  }
+}
+
+function frame(now) {
+  const dt = Math.min(0.033, (now - last) / 1000 || 0);
+  last = now;
+  update(dt);
+  for (const c of lvl.coins) if (c.taken && c.fx > 0) c.fx -= dt;
+  if (shake > 0) shake -= dt;
+  render();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+$('go').onclick = startGame;
+$('again').onclick = startGame;
+document.addEventListener('visibilitychange', () => { last = performance.now(); });
+
+// Telegram's script is loaded only when the page was opened from Telegram
+async function loadTelegram() {
+  if (!/tgWebAppData/.test(location.hash)) return null;
+  await new Promise(done => {
+    const s = document.createElement('script');
+    s.src = 'https://telegram.org/js/telegram-web-app.js';
+    s.onload = s.onerror = done;
+    document.head.append(s);
+  });
+  return window.Telegram?.WebApp || null;
+}
+
+// Inside Telegram: full height, no swipe-to-close while jumping, tilt from Telegram's own sensor
+loadTelegram().then(tgApp => {
+  if (!tgApp) return;
+  tgApp.ready(); tgApp.expand();
+  tgApp.disableVerticalSwipes?.();
+  try {
+    if (tgApp.DeviceOrientation) {
+      tgApp.DeviceOrientation.start({ refresh_rate: 50 });
+      tgApp.onEvent('deviceOrientationChanged', () => {
+        const g = tgApp.DeviceOrientation.gamma; // radians
+        if (Number.isFinite(g)) tilt = g * 180 / Math.PI;
+      });
+    }
+  } catch (e) {}
+});
+</script>
+</body>
+</html>
